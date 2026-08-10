@@ -17,6 +17,7 @@ import userRoutes from "./src/routes/user.routes.js";
 import roomRoutes from "./src/routes/room.routes.js";
 import adminRoutes from "./src/routes/admin.routes.js";
 import customerRoutes from "./src/routes/customer.routes.js";
+import addonRoutes from "./src/routes/addon.routes.js";
 const app = express();
 
 app.use(cors({ origin: process.env.CLIENT_URL }));
@@ -29,6 +30,7 @@ app.use("/api", serviceRoutes);
 app.use("/api", mocktailRoutes);
 app.use("/api", timeslotRoutes);
 app.use("/api", roomRoutes);
+app.use("/api", addonRoutes);
 
 app.use("/api", bookingRoutes);
 app.use("/api", couponRoutes);

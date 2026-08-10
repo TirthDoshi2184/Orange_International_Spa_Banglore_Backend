@@ -28,6 +28,7 @@ const mocktailSchema = new mongoose.Schema(
     name: { type: String, required: true },
     name_kn: { type: String, default: "" },
     category: { type: String, enum: MENU_CATEGORIES, required: true },
+    category_kn: { type: String, default: "" }, // display label only — filtering/queries stay on `category`
     description: { type: String },
     description_kn: { type: String, default: "" },
     ingredients: [{ type: String }],

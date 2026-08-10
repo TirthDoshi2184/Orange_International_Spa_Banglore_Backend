@@ -7,6 +7,7 @@ import Booking from "../models/Booking.js";
 import TimeSlot from "../models/TimeSlot.js";
 import { calculateTotals } from "../services/pricing.js";
 import { generateBookingIdentifiers, getTodayRange } from "../utils/generateIds.js";
+import AddonOrder from "../models/AddOnOrder.js";
 
 import crypto from "crypto";
 import { razorpay } from "../services/razorpay.js";
@@ -103,6 +104,32 @@ export const createBooking = async (req, res, next) => {
       coupon.isUsed = true;
       await coupon.save();
     }
+
+   // Surface the initial order on the Live Orders board too — not just room add-ons.
+   // Needs names, which resolvedServices/resolvedMocktails don't carry, so populate first.
+   const populatedForOrder = await booking.populate([
+     { path: "services.serviceId", select: "name" },
+     { path: "mocktails.mocktailId", select: "name" },
+   ]);
+
+   const initialOrderItems = [
+     ...populatedForOrder.services.map((s) => ({
+       type: "service", refId: s.serviceId._id, name: s.serviceId.name, price: s.price, qty: 1,     })),
+     ...populatedForOrder.mocktails.map((m) => ({
+       type: "mocktail", refId: m.mocktailId._id, name: m.mocktailId.name, price: m.price, qty: m.qty,
+     })),
+   ];
+
+   if (initialOrderItems.length > 0) {
+     await AddonOrder.create({
+       bookingId: booking._id,
+       roomId: null, // no room yet — assigned later at check-in
+       items: initialOrderItems,
+       amount: totals.subtotal,
+       source: "initial",
+     });
+   }
+
     res.status(201).json({ success: true, data: booking });
   } catch (err) { next(err); }
 };
@@ -189,6 +216,12 @@ export const updateBookingStatus = async (req, res, next) => {
         throw { statusCode: 400, message: `No available ${roomType || ""} room right now.` };
       }
       booking.roomId = assigned;
+     // Backfill the room onto this booking's initial Live-Orders card, which was
+     // created without a room at checkout time (see createBooking).
+     await AddonOrder.updateMany(
+       { bookingId: booking._id, source: "initial", roomId: null },
+       { $set: { roomId: assigned } }
+     );
     }
 
     await booking.save();
@@ -403,6 +436,7 @@ export const createAddonOrder = async (req, res, next) => {
 // POST /api/bookings/:id/addon-confirm
 // { services, mocktails, razorpay_order_id, razorpay_payment_id, razorpay_signature }
 // Verifies payment FIRST — only writes the items to the booking if verification passes.
+
 export const confirmAddonPayment = async (req, res, next) => {
   try {
     const { services = [], mocktails = [], razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
@@ -417,8 +451,8 @@ export const confirmAddonPayment = async (req, res, next) => {
 
     const booking = await Booking.findById(req.params.id);
     if (!booking) throw { statusCode: 404, message: "Booking not found" };
+    if (!booking.roomId) throw { statusCode: 400, message: "Booking has no room assigned." };
 
-    // Recompute fresh — never trust a client-supplied amount, even post-payment
     const { resolvedServices, resolvedMocktails, newTotals, delta } = await computeAddonDelta(booking, services, mocktails);
 
     booking.services.push(...resolvedServices);
@@ -433,16 +467,35 @@ export const confirmAddonPayment = async (req, res, next) => {
     booking.paymentStatus = totalPaid >= booking.grandTotal ? "paid" : totalPaid > 0 ? "partial" : "pending";
 
     await booking.save();
+
     const populated = await booking.populate([
       { path: "customerId roomId" },
-      { path: "services.serviceId", select: "name category" },
+      { path: "services.serviceId", select: "name name_kn category" },
       { path: "services.durationId", select: "durationMinutes" },
-      { path: "mocktails.mocktailId", select: "name" },
+      { path: "mocktails.mocktailId", select: "name name_kn category" },
     ]);
+
+    // Build the fulfillment record from exactly the items just added — sliced from
+    // the tail of each array since resolvedServices/resolvedMocktails were appended
+    // above, in that order. This is what makes "just-added" items distinguishable
+    // from the original checkout items, which the raw booking arrays alone can't do.
+    const newServiceItems = resolvedServices.length > 0 ? populated.services.slice(-resolvedServices.length) : [];
+    const newMocktailItems = resolvedMocktails.length > 0 ? populated.mocktails.slice(-resolvedMocktails.length) : [];
+
+    const orderItems = [
+      ...newServiceItems.map((s) => ({
+        type: "service", refId: s.serviceId._id, name: s.serviceId.name, price: s.price, qty: 1,
+      })),
+      ...newMocktailItems.map((m) => ({
+        type: "mocktail", refId: m.mocktailId._id, name: m.mocktailId.name, price: m.price, qty: m.qty,
+      })),
+    ];
+
+    await AddonOrder.create({ bookingId: booking._id, roomId: booking.roomId, items: orderItems, amount: delta });
+
     res.json({ success: true, data: populated });
   } catch (err) { next(err); }
 };
-
 // PATCH /api/admin/bookings/:id/reassign-room   { roomId }
 export const reassignRoom = async (req, res, next) => {
   try {
@@ -463,6 +516,10 @@ export const reassignRoom = async (req, res, next) => {
 
     booking.roomId = roomId;
     await booking.save();
+      await AddonOrder.updateMany(
+     { bookingId: booking._id, source: "initial" },
+     { $set: { roomId } }
+   );
     const populated = await booking.populate("timeSlot customerId roomId");
     res.json({ success: true, data: populated });
   } catch (err) { next(err); }
