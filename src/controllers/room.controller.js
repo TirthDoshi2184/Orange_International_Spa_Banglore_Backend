@@ -24,22 +24,27 @@ export const updateRoom = async (req, res, next) => {
 };
 
 // GET /api/admin/rooms/availability
+import { getTodayRange } from "../utils/generateIds.js";
+
 export const getRoomAvailability = async (req, res, next) => {
   try {
     const rooms = await Room.find({ isActive: true });
-    const occupied = await Booking.find({ bookingStatus: "in-service", roomId: { $ne: null } }).select("roomId");
-    const occupiedIds = new Set(occupied.map((b) => b.roomId.toString()));
+    const { start, end } = getTodayRange();
 
+    const occupied = await Booking.find({
+      bookingStatus: "in-service",
+      bookingDate: { $gte: start, $lte: end }, // ← same fix here
+    }).select("roomId");
+
+    const occupiedIds = new Set(occupied.map((b) => b.roomId.toString()));
     const withStatus = rooms.map((r) => ({
-      _id: r._id,
-      name: r.name,
-      type: r.type,
-      isOccupied: occupiedIds.has(r._id.toString()),
+      _id: r._id, name: r.name, type: r.type, isOccupied: occupiedIds.has(r._id.toString()),
     }));
 
     res.json({ success: true, data: withStatus });
   } catch (err) { next(err); }
 };
+
 export const deleteRoom = async (req, res, next) => {
   try {
     // Guard: don't allow deleting a room that's currently in use —

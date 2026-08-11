@@ -208,6 +208,12 @@ export const updateBookingStatus = async (req, res, next) => {
       }
     }
 
+    if (bookingStatus === "cancelled") {
+  await AddonOrder.updateMany(
+    { bookingId: booking._id, status: { $ne: "delivered" } }, // don't touch already-delivered items
+    { status: "cancelled" }
+  );
+}
     booking.bookingStatus = bookingStatus;
 
     if (bookingStatus === "in-service" && !booking.roomId) {
@@ -508,10 +514,11 @@ export const reassignRoom = async (req, res, next) => {
 
     // Same safety check as check-in: don't allow moving into a room someone else occupies
     const occupied = await Booking.findOne({
-      _id: { $ne: booking._id },
-      roomId,
-      bookingStatus: "in-service",
-    });
+  _id: { $ne: booking._id },
+  roomId,
+  bookingStatus: "in-service",
+  bookingDate: { $gte: start, $lte: end }, // add this, using getTodayRange() imported at top
+});
     if (occupied) throw { statusCode: 400, message: "That room is already occupied by another customer." };
 
     booking.roomId = roomId;

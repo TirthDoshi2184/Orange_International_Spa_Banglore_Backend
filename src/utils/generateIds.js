@@ -34,7 +34,13 @@ export const assignAvailableRoom = async (type = null) => {
   const rooms = await Room.find(filter);
   if (rooms.length === 0) return null;
 
-  const occupied = await Booking.find({ bookingStatus: "in-service", roomId: { $ne: null } }).select("roomId");
+  const { start, end } = getTodayRange();
+  const occupied = await Booking.find({
+    bookingStatus: "in-service",
+    bookingDate: { $gte: start, $lte: end }, // ← bounds occupancy to today, fixes the stale-booking bug
+    roomId: { $ne: null },
+  }).select("roomId");
+
   const occupiedIds = new Set(occupied.map((b) => b.roomId.toString()));
   const freeRoom = rooms.find((r) => !occupiedIds.has(r._id.toString()));
   return freeRoom ? freeRoom._id : null;

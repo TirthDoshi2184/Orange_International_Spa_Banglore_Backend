@@ -17,6 +17,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.5.0",
+    "node-cron": "^4.6.0",
     "razorpay": "^2.9.8",
     "zod": "^3.25.76"
   },

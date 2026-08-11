@@ -17,7 +17,7 @@ const addonOrderSchema = new mongoose.Schema(
     roomId: { type: mongoose.Schema.Types.ObjectId, ref: "Room", default: null }, // null until room is assigned at check-in
     items: [addonOrderItemSchema],
     amount: { type: Number, required: true },
-    status: { type: String, enum: ["pending", "preparing", "delivered"], default: "pending" },
+    status: { type: String, enum: ["pending", "preparing", "delivered","cancelled"], default: "pending" },
      source: { type: String, enum: ["initial", "addon"], default: "addon" }, // "initial" = placed at booking time, "addon" = added during room service
   },
   { timestamps: true }

@@ -83,3 +83,12 @@ export const getDashboardStats = async (req, res, next) => {
     });
   } catch (err) { next(err); }
 };
+
+import { runDayEndCleanup } from "../jobs/dayEndCleanup.js";
+
+export const triggerDayEndCleanup = async (req, res, next) => {
+  try {
+    const result = await runDayEndCleanup();
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+};

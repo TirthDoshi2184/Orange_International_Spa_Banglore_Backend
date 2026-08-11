@@ -1,9 +1,15 @@
 import AddonOrder from "../models/AddOnOrder.js";
 
+import { getTodayRange } from "../utils/generateIds.js";
+
 export const getAddonOrders = async (req, res, next) => {
   try {
     const { status } = req.query;
-    const filter = status ? { status } : {};
+    const { start, end } = getTodayRange();
+
+    const filter = { createdAt: { $gte: start, $lte: end } };
+    if (status) filter.status = status;
+
     const orders = await AddonOrder.find(filter)
       .populate("roomId", "name type")
       .populate({
@@ -12,6 +18,7 @@ export const getAddonOrders = async (req, res, next) => {
         populate: { path: "customerId", select: "name mobileNumber" },
       })
       .sort({ createdAt: -1 });
+
     res.json({ success: true, data: orders });
   } catch (err) { next(err); }
 };
@@ -30,3 +37,4 @@ export const updateAddonOrderStatus = async (req, res, next) => {
     res.json({ success: true, data: order });
   } catch (err) { next(err); }
 };
+

@@ -4,6 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { connectDB } from "./src/config/db.js";
 import { errorHandler } from "./src/middlewares/errorHandler.js";
+import cron from "node-cron";
 
 import authRoutes from "./src/routes/auth.routes.js";
 import serviceRoutes from "./src/routes/service.routes.js";
@@ -18,6 +19,7 @@ import roomRoutes from "./src/routes/room.routes.js";
 import adminRoutes from "./src/routes/admin.routes.js";
 import customerRoutes from "./src/routes/customer.routes.js";
 import addonRoutes from "./src/routes/addon.routes.js";
+import { runDayEndCleanup } from "./src/jobs/dayEndCleanup.js";
 const app = express();
 
 app.use(cors({ origin: process.env.CLIENT_URL }));
@@ -49,4 +51,9 @@ const PORT = process.env.PORT || 5000;
 
 connectDB().then(() => {
   app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+});
+
+cron.schedule("0 23 * * *", async () => {
+  const result = await runDayEndCleanup();
+  console.log("[Day-End Cleanup]", result);
 });
