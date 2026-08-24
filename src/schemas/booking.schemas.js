@@ -44,7 +44,7 @@ export const addItemsSchema = z.object({
 
 export const confirmPaymentSchema = z.object({
      amount: z.number().positive(),
-     method: z.enum(["cash", "card", "razorpay", "upi", "other"]),
+     method: z.enum(["cash", "card", "razorpay", "upi", "other", "membership_credit"]),
      reference: z.string().optional(),
    });
 

@@ -12,7 +12,11 @@ import AddonOrder from "../models/AddOnOrder.js";
 import crypto from "crypto";
 import { razorpay } from "../services/razorpay.js";
 
+import Membership from "../models/Membership.js";
 import { assignAvailableRoom } from "../utils/generateIds.js";
+
+import { deductCredit, findMembershipByCustomerId, reverseMembershipDeduction } from "../services/membership.services.js";
+
 const GST_RATE = Number(process.env.GST_RATE || 5);
 
 // Shared: re-fetch authoritative prices from DB, never trust client-sent prices
@@ -141,7 +145,31 @@ export const confirmPayment = async (req, res, next) => {
     const booking = await Booking.findById(req.params.id);
     if (!booking) throw { statusCode: 404, message: "Booking not found" };
 
-    booking.paymentHistory.push({ amount, method, reference });
+    let paymentEntry = { amount, method, reference };
+
+    if (method === "membership_credit") {
+      const membership = await Membership.findOne({ customerId: booking.customerId });
+      if (!membership) throw { statusCode: 400, message: "This customer does not have a membership" };
+
+      // deductCredit throws a clean {statusCode, message} on insufficient balance —
+      // it propagates straight to the error handler, nothing gets written to the booking.
+      const { transaction } = await deductCredit({
+        membershipId: membership._id,
+        amount,
+        type: "service_deduction",
+        bookingId: booking._id,
+        performedBy: req.admin.id,
+      });
+
+      paymentEntry = {
+        amount,
+        method: "membership_credit",
+        reference: membership.membershipId,
+        membershipTxnId: transaction._id,
+      };
+    }
+
+    booking.paymentHistory.push(paymentEntry);
 
     const totalPaid = booking.paymentHistory.reduce((sum, p) => sum + p.amount, 0);
     booking.paymentStatus =
@@ -150,13 +178,13 @@ export const confirmPayment = async (req, res, next) => {
     if (!booking.orderId) booking.orderId = `ORD-${Date.now()}`;
 
     await booking.save();
-const populated = await booking.populate([
-  { path: "customerId roomId" },
-  { path: "services.serviceId", select: "name category" },
-  { path: "services.durationId", select: "durationMinutes" },
-  { path: "mocktails.mocktailId", select: "name" },
-]);
-res.json({ success: true, data: populated });
+    const populated = await booking.populate([
+      { path: "customerId roomId" },
+      { path: "services.serviceId", select: "name category" },
+      { path: "services.durationId", select: "durationMinutes" },
+      { path: "mocktails.mocktailId", select: "name" },
+    ]);
+    res.json({ success: true, data: populated });
   } catch (err) { next(err); }
 };
 // getBookingById — add populate chain
@@ -208,14 +236,30 @@ export const updateBookingStatus = async (req, res, next) => {
       }
     }
 
-    if (bookingStatus === "cancelled") {
-  await AddonOrder.updateMany(
-    { bookingId: booking._id, status: { $ne: "delivered" } }, // don't touch already-delivered items
-    { status: "cancelled" }
-  );
-}
-    booking.bookingStatus = bookingStatus;
+if (bookingStatus === "cancelled") {
+      await AddonOrder.updateMany(
+        { bookingId: booking._id, status: { $ne: "delivered" } }, // don't touch already-delivered items
+        { status: "cancelled" }
+      );
 
+      // Auto-reverse membership credit ONLY if the booking never reached "completed" —
+      // service was never delivered, so there's nothing to keep the deduction for.
+      // A booking cancelled AFTER completion is a refund case, not a cancellation case,
+      // and stays untouched here (refunds are out of scope per current business rules).
+      // Idempotent: re-cancelling (or double-clicking) never double-reverses.
+      if (booking.bookingStatus !== "completed" && booking.bookingStatus !== "cancelled") {
+        const membershipPayments = booking.paymentHistory.filter(
+          (p) => p.method === "membership_credit" && p.membershipTxnId
+        );
+        for (const payment of membershipPayments) {
+          await reverseMembershipDeduction({
+            originalTransactionId: payment.membershipTxnId,
+            performedBy: req.admin?.id || null,
+          });
+        }
+      }
+    }
+    booking.bookingStatus = bookingStatus;
     if (bookingStatus === "in-service" && !booking.roomId) {
       const assigned = roomId || (await assignAvailableRoom(roomType));
       if (!assigned) {
@@ -528,6 +572,90 @@ export const reassignRoom = async (req, res, next) => {
      { $set: { roomId } }
    );
     const populated = await booking.populate("timeSlot customerId roomId");
+    res.json({ success: true, data: populated });
+  } catch (err) { next(err); }
+};
+
+
+// GET /api/bookings/room/:roomId/membership
+// Public — used by the in-room QR add-on page to show balance before payment.
+export const getRoomMembership = async (req, res, next) => {
+  try {
+    const booking = await Booking.findOne({
+      roomId: req.params.roomId,
+      bookingStatus: "in-service",
+    }).select("customerId");
+    if (!booking) return res.json({ success: true, data: null });
+
+    const membership = await findMembershipByCustomerId(booking.customerId);
+    if (!membership) return res.json({ success: true, data: null });
+
+    res.json({ success: true, data: { id: membership._id, tier: membership.tier, balance: membership.balance, status: membership.status } });
+  } catch (err) { next(err); }
+};
+
+// POST /api/bookings/:id/addon-confirm-membership   { services, mocktails }
+// Public, parallel to confirmAddonPayment — no Razorpay signature needed because
+// the "verification" here is the membership balance check itself (server-side,
+// atomic, can't go negative). The booking's customerId is fixed server-side —
+// there's no field in the request body that lets a caller pick whose balance
+// gets charged, so this can't be redirected to someone else's membership.
+export const confirmAddonPaymentWithMembership = async (req, res, next) => {
+  try {
+    const { services = [], mocktails = [] } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) throw { statusCode: 404, message: "Booking not found" };
+    if (!booking.roomId) throw { statusCode: 400, message: "Booking has no room assigned." };
+    if (["completed", "cancelled"].includes(booking.bookingStatus)) {
+      throw { statusCode: 400, message: "This booking is closed" };
+    }
+
+    const membership = await findMembershipByCustomerId(booking.customerId);
+    if (!membership) throw { statusCode: 400, message: "No membership found for this booking." };
+
+    const { resolvedServices, resolvedMocktails, newTotals, delta } = await computeAddonDelta(booking, services, mocktails);
+    if (delta <= 0) throw { statusCode: 400, message: "Invalid add-on amount" };
+
+    // Throws a clean {statusCode:400, message:"Insufficient membership balance..."}
+    // if balance is short — nothing below this line runs, booking stays untouched.
+    const { transaction } = await deductCredit({
+      membershipId: membership._id,
+      amount: delta,
+      type: "addon_deduction",
+      // performedBy left null — this is a customer self-service transaction,
+      // not staff-initiated. The ledger row still records everything else.
+      performedBy: null,
+    });
+
+    booking.services.push(...resolvedServices);
+    booking.mocktails.push(...resolvedMocktails);
+    booking.subtotal = newTotals.subtotal;
+    booking.gst = newTotals.gst;
+    booking.discount = newTotals.discount;
+    booking.grandTotal = newTotals.grandTotal;
+    booking.paymentHistory.push({
+      amount: delta, method: "membership_credit", reference: membership.membershipId, membershipTxnId: transaction._id,
+    });
+
+    const totalPaid = booking.paymentHistory.reduce((sum, p) => sum + p.amount, 0);
+    booking.paymentStatus = totalPaid >= booking.grandTotal ? "paid" : totalPaid > 0 ? "partial" : "pending";
+    await booking.save();
+
+    const populated = await booking.populate([
+      { path: "customerId roomId" },
+      { path: "services.serviceId", select: "name name_kn category" },
+      { path: "services.durationId", select: "durationMinutes" },
+      { path: "mocktails.mocktailId", select: "name name_kn category" },
+    ]);
+
+    const newServiceItems = resolvedServices.length > 0 ? populated.services.slice(-resolvedServices.length) : [];
+    const newMocktailItems = resolvedMocktails.length > 0 ? populated.mocktails.slice(-resolvedMocktails.length) : [];
+    const orderItems = [
+      ...newServiceItems.map((s) => ({ type: "service", refId: s.serviceId._id, name: s.serviceId.name, price: s.price, qty: 1 })),
+      ...newMocktailItems.map((m) => ({ type: "mocktail", refId: m.mocktailId._id, name: m.mocktailId.name, price: m.price, qty: m.qty })),
+    ];
+    await AddonOrder.create({ bookingId: booking._id, roomId: booking.roomId, items: orderItems, amount: delta });
+
     res.json({ success: true, data: populated });
   } catch (err) { next(err); }
 };

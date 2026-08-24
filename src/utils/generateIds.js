@@ -45,3 +45,14 @@ export const assignAvailableRoom = async (type = null) => {
   const freeRoom = rooms.find((r) => !occupiedIds.has(r._id.toString()));
   return freeRoom ? freeRoom._id : null;
 };
+
+export const generateMembershipId = async () => {
+  // Single global counter (not date-scoped like bookings) — membership IDs
+  // must stay sequential and unique for the life of the business.
+  const counter = await Counter.findOneAndUpdate(
+    { _id: "membership" },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `CV-MEM-${String(counter.seq).padStart(6, "0")}`;
+};

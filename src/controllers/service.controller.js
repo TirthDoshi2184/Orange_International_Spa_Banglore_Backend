@@ -71,3 +71,30 @@ export const getAllServicesAdmin = async (req, res, next) => {
     res.json({ success: true, data: services });
   } catch (err) { next(err); }
 };
+
+// service.controller.js — add this export
+
+export const bulkCreateServices = async (req, res, next) => {
+  try {
+    const { services } = req.body;
+    if (!Array.isArray(services) || !services.length) {
+      return res.status(400).json({ success: false, message: "services array is required" });
+    }
+
+    const created = [];
+    for (const item of services) {
+      const { durations, ...serviceFields } = item;
+      const service = await Service.create(serviceFields);
+
+      if (Array.isArray(durations) && durations.length) {
+        const docs = durations.map((d) => ({ ...d, serviceId: service._id }));
+        await ServiceDuration.insertMany(docs);
+      }
+      created.push(service);
+    }
+
+    res.status(201).json({ success: true, count: created.length, data: created });
+  } catch (err) {
+    next(err);
+  }
+};

@@ -14,6 +14,8 @@ import {
   confirmAddonPayment,
   createAddonOrder,
   reassignRoom,
+  getRoomMembership,
+  confirmAddonPaymentWithMembership,
 } from "../controllers/booking.controller.js";
 import { protectAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
@@ -24,7 +26,7 @@ const router = Router();
 router.post("/bookings/calculate", validate(calculateSchema), calculateBooking);
 router.post("/bookings", validate(createBookingSchema), createBooking);
 router.patch("/admin/bookings/:id/status", protectAdmin, validate(updateStatusSchema), updateBookingStatus);
-router.post("/bookings/:id/confirm-payment", validate(confirmPaymentSchema), confirmPayment);
+router.post("/bookings/:id/confirm-payment", protectAdmin, validate(confirmPaymentSchema), confirmPayment);
 router.get("/bookings/:id", getBookingById);
 router.get("/admin/bookings", protectAdmin, getAdminBookings);
 
@@ -40,4 +42,9 @@ router.post("/bookings/:id/addon-confirm", validate(addonConfirmSchema), confirm
 
 // Admin route to reassign a room for a booking
 router.patch("/admin/bookings/:id/reassign-room", protectAdmin, validate(reassignRoomSchema), reassignRoom);
+
+router.get("/bookings/room/:roomId/membership", getRoomMembership);
+router.post("/bookings/:id/addon-confirm-membership", confirmAddonPaymentWithMembership);
+
+
 export default router;

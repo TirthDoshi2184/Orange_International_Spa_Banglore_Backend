@@ -19,6 +19,7 @@ import roomRoutes from "./src/routes/room.routes.js";
 import adminRoutes from "./src/routes/admin.routes.js";
 import customerRoutes from "./src/routes/customer.routes.js";
 import addonRoutes from "./src/routes/addon.routes.js";
+import membershipRoutes from "./src/routes/membership.routes.js";
 import { runDayEndCleanup } from "./src/jobs/dayEndCleanup.js";
 const app = express();
 
@@ -40,6 +41,8 @@ app.use("/api", reviewRoutes);
 
 app.use("/api", adminRoutes);
 app.use("/api", customerRoutes);
+
+app.use("/api", membershipRoutes);
 
 
 app.use("/api", reportRoutes);

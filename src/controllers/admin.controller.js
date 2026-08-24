@@ -4,9 +4,9 @@ import { getTodayRange } from "../utils/generateIds.js";
 
 export const getDashboardStats = async (req, res, next) => {
   try {
-    const { start, end } = getTodayRange();
+ const { start, end } = getTodayRange();
     const todayFilter = { bookingDate: { $gte: start, $lte: end } };
-
+    const activeTodayFilter = { ...todayFilter, bookingStatus: { $ne: "cancelled" } }; // excludes cancelled from "what actually happened today" stats
     const [
   todaysBookings,
   pendingCount,
@@ -26,16 +26,16 @@ export const getDashboardStats = async (req, res, next) => {
   Booking.countDocuments({ ...todayFilter, bookingStatus: "completed" }),
   Booking.countDocuments({ ...todayFilter, bookingStatus: "cancelled" }),
   Booking.countDocuments({ ...todayFilter, bookingStatus: "in-service" }),
-  Booking.aggregate([
-    { $match: todayFilter },
+    Booking.aggregate([
+    { $match: activeTodayFilter },
     { $unwind: { path: "$paymentHistory", preserveNullAndEmptyArrays: false } },
     { $group: { _id: null, total: { $sum: "$paymentHistory.amount" } } },
   ]),
   Booking.distinct("customerId", todayFilter),
   Coupon.countDocuments({}),
   Coupon.countDocuments({ isUsed: true }),
-      Booking.aggregate([
-        { $match: todayFilter },
+            Booking.aggregate([
+        { $match: activeTodayFilter },
         { $unwind: "$services" },
         { $group: { _id: "$services.serviceId", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
@@ -45,7 +45,7 @@ export const getDashboardStats = async (req, res, next) => {
         { $project: { name: "$service.name", count: 1 } },
       ]),
       Booking.aggregate([
-        { $match: todayFilter },
+        { $match: activeTodayFilter },
         { $unwind: "$mocktails" },
         { $group: { _id: "$mocktails.mocktailId", count: { $sum: "$mocktails.qty" } } },
         { $sort: { count: -1 } },
@@ -55,14 +55,14 @@ export const getDashboardStats = async (req, res, next) => {
         { $project: { name: "$mocktail.name", count: 1 } },
       ]),
       Booking.aggregate([
-        { $match: todayFilter },
+        { $match: activeTodayFilter },
         { $group: { _id: "$timeSlot", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $lookup: { from: "timeslots", localField: "_id", foreignField: "_id", as: "slot" } },
         { $unwind: "$slot" },
         { $project: { time: "$slot.time", count: 1 } },
       ]),
-    ]);
+        ]);
 
     res.json({
       success: true,

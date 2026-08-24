@@ -1,4 +1,7 @@
 import Booking from "../models/Booking.js";
+import Membership from "../models/Membership.js";
+import MembershipTransaction from "../models/MembershipTransaction.js";
+
 
 // GET /api/admin/reports/revenue-trend?days=7
 export const getRevenueTrend = async (req, res, next) => {
@@ -77,5 +80,41 @@ export const getPeakHoursReport = async (req, res, next) => {
     ]);
 
     res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+};
+
+
+// GET /api/admin/reports/membership-overview
+export const getMembershipReport = async (req, res, next) => {
+  try {
+    const [byTier, totals, recharges, deductions, statusCounts] = await Promise.all([
+      Membership.aggregate([
+        { $group: { _id: "$tier", count: { $sum: 1 }, totalCredit: { $sum: "$totalCreditEver" } } },
+      ]),
+      Membership.aggregate([
+        { $group: { _id: null, totalCreditSold: { $sum: "$totalCreditEver" }, totalUsed: { $sum: "$totalUsedEver" }, outstandingLiability: { $sum: "$balance" } } },
+      ]),
+      MembershipTransaction.aggregate([
+        { $match: { type: "recharge" } },
+        { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ]),
+      MembershipTransaction.aggregate([
+        { $match: { type: { $in: ["service_deduction", "addon_deduction"] } } },
+        { $group: { _id: "$type", total: { $sum: { $abs: "$amount" } }, count: { $sum: 1 } } },
+      ]),
+      Membership.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        byTier,
+        totals: totals[0] || { totalCreditSold: 0, totalUsed: 0, outstandingLiability: 0 },
+        rechargeTotal: recharges[0]?.total || 0,
+        rechargeCount: recharges[0]?.count || 0,
+        deductionsByType: deductions,
+        statusCounts,
+      },
+    });
   } catch (err) { next(err); }
 };

@@ -22,13 +22,13 @@ const bookingMocktailItemSchema = new mongoose.Schema(
 const paymentEntrySchema = new mongoose.Schema(
   {
     amount: { type: Number, required: true },
-    method: { type: String, enum: ["cash", "card", "razorpay", "upi", "other"], required: true },
+    method: { type: String, enum: ["cash", "card", "razorpay", "upi", "other", "membership_credit"], required: true },
     reference: { type: String },
     paidAt: { type: Date, default: Date.now },
+    membershipTxnId: { type: mongoose.Schema.Types.ObjectId, ref: "MembershipTransaction", default: null },
   },
   { _id: false }
 );
-
 const bookingSchema = new mongoose.Schema(
   {
     bookingNumber: { type: String, required: true, unique: true },
