@@ -13,8 +13,8 @@ export const calculateSchema = z.object({
   services: z.array(serviceItem).optional().default([]),
   mocktails: z.array(mocktailItem).optional().default([]),
   couponCode: z.string().optional(),
+  manualDiscountPercent: z.number().min(0).max(100).optional(),
 });
-
 export const createBookingSchema = z.object({
   customer: z.object({
     name: z.string().min(1),
@@ -26,9 +26,9 @@ export const createBookingSchema = z.object({
   mocktails: z.array(mocktailItem).optional().default([]),
   timeSlotId: z.string().min(1),
   couponCode: z.string().optional(),
+  manualDiscountPercent: z.number().min(0).max(100).optional(),
   specialInstructions: z.string().optional(),
 });
-
 export const updateStatusSchema = z.object({
   bookingStatus: z.enum(["waiting", "in-service", "completed", "cancelled"]),
   roomId: z.string().optional(),
@@ -77,3 +77,4 @@ export const addonConfirmSchema = z.object({
 export const reassignRoomSchema = z.object({
   roomId: z.string().min(1),
 });
+

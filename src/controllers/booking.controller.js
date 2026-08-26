@@ -20,7 +20,7 @@ import { deductCredit, findMembershipByCustomerId, reverseMembershipDeduction } 
 const GST_RATE = Number(process.env.GST_RATE || 5);
 
 // Shared: re-fetch authoritative prices from DB, never trust client-sent prices
-const resolvePricing = async ({ services = [], mocktails = [], couponCode, customerId }) => {
+const resolvePricing = async ({ services = [], mocktails = [], couponCode, customerId, manualDiscountPercent, isAdmin = false }) => {
   const durationIds = services.map((s) => s.durationId);
   const durations = await ServiceDuration.find({ _id: { $in: durationIds }, isActive: true });
 
@@ -42,7 +42,7 @@ const resolvePricing = async ({ services = [], mocktails = [], couponCode, custo
   const servicesTotal = resolvedServices.reduce((sum, s) => sum + s.price, 0);
   const mocktailsTotal = resolvedMocktails.reduce((sum, m) => sum + m.price, 0);
 
-   let discountPercent = 0;
+  let discountPercent = 0;
   let coupon = null;
   if (couponCode) {
     coupon = await Coupon.findOne({ code: couponCode });
@@ -54,13 +54,28 @@ const resolvePricing = async ({ services = [], mocktails = [], couponCode, custo
     }
     discountPercent = coupon.discountPercent;
   }
-  const totals = calculateTotals({ servicesTotal, mocktailsTotal, discountPercent, gstRate: GST_RATE });
+
+  // Reception-only manual discount. Gated by admin auth (attachAdminIfPresent sets
+  // req.admin), and mutually exclusive with a coupon on the same booking.
+  let appliedManualDiscountPercent = 0;
+  if (manualDiscountPercent) {
+    if (!isAdmin) throw { statusCode: 403, message: "Only reception/admin can apply a manual discount." };
+    if (coupon) throw { statusCode: 400, message: "Cannot apply a manual discount together with a coupon. Remove the coupon first." };
+    appliedManualDiscountPercent = manualDiscountPercent;
+  }
+
+  const totals = calculateTotals({
+    servicesTotal,
+    mocktailsTotal,
+    discountPercent,
+    gstRate: GST_RATE,
+    manualDiscountPercent: appliedManualDiscountPercent,
+  });
   return { resolvedServices, resolvedMocktails, coupon, totals };
 };
-
 export const calculateBooking = async (req, res, next) => {
   try {
-    const { totals } = await resolvePricing(req.body);
+    const { totals } = await resolvePricing({ ...req.body, isAdmin: !!req.admin });
     res.json({ success: true, data: totals });
   } catch (err) { next(err); }
 };
@@ -82,8 +97,8 @@ export const createBooking = async (req, res, next) => {
     let customerDoc = await Customer.findOne({ mobileNumber: customer.mobileNumber });
     if (!customerDoc) customerDoc = await Customer.create(customer);
 
-    const { resolvedServices, resolvedMocktails, coupon, totals } =
-      await resolvePricing({ services, mocktails, couponCode, customerId: customerDoc._id });
+        const { resolvedServices, resolvedMocktails, coupon, totals } =
+      await resolvePricing({ services, mocktails, couponCode, customerId: customerDoc._id, manualDiscountPercent: req.body.manualDiscountPercent, isAdmin: !!req.admin });
     const { bookingNumber, queueNumber } = await generateBookingIdentifiers();
 
     const booking = await Booking.create({
@@ -95,12 +110,12 @@ export const createBooking = async (req, res, next) => {
       subtotal: totals.subtotal,
       gst: totals.gst,
       discount: totals.discount,
+      manualDiscountPercent: totals.manualDiscountPercent,
       grandTotal: totals.grandTotal,
       couponUsed: coupon ? coupon._id : null,
       queueNumber,
       specialInstructions,
     });
-
     customerDoc.visitHistory.push(booking._id);
     await customerDoc.save();
 
@@ -259,13 +274,14 @@ if (bookingStatus === "cancelled") {
         }
       }
     }
-    booking.bookingStatus = bookingStatus;
+        booking.bookingStatus = bookingStatus;
     if (bookingStatus === "in-service" && !booking.roomId) {
       const assigned = roomId || (await assignAvailableRoom(roomType));
       if (!assigned) {
         throw { statusCode: 400, message: `No available ${roomType || ""} room right now.` };
       }
       booking.roomId = assigned;
+      if (!booking.checkInTime) booking.checkInTime = new Date(); // start of session, used for the Live Sessions countdown
      // Backfill the room onto this booking's initial Live-Orders card, which was
      // created without a room at checkout time (see createBooking).
      await AddonOrder.updateMany(
@@ -319,20 +335,26 @@ export const addItemsToBooking = async (req, res, next) => {
     booking.services.push(...resolvedServices);
     booking.mocktails.push(...resolvedMocktails); // each add-on is its own line item, same as initial checkout — no merging, keeps ordering history clear
 
-    let discountPercent = 0;
+        let discountPercent = 0;
     if (booking.couponUsed) {
       const coupon = await Coupon.findById(booking.couponUsed);
       if (coupon) discountPercent = coupon.discountPercent;
     }
 
     const servicesTotal = booking.services.reduce((sum, s) => sum + s.price, 0);
-const mocktailsTotal = booking.mocktails.reduce((sum, m) => sum + m.price, 0);
-const totals = calculateTotals({ servicesTotal, mocktailsTotal, discountPercent, gstRate: GST_RATE });
+    const mocktailsTotal = booking.mocktails.reduce((sum, m) => sum + m.price, 0);
+    const totals = calculateTotals({
+      servicesTotal,
+      mocktailsTotal,
+      discountPercent,
+      gstRate: GST_RATE,
+      manualDiscountPercent: booking.manualDiscountPercent || 0, // keep reception's original discount applied
+    });
 
-booking.subtotal = totals.subtotal;
-booking.gst = totals.gst;
-booking.discount = totals.discount;
-booking.grandTotal = totals.grandTotal;
+    booking.subtotal = totals.subtotal;
+    booking.gst = totals.gst;
+    booking.discount = totals.discount;
+    booking.grandTotal = totals.grandTotal;
 
 // Recompute payment status AFTER grandTotal reflects the new items
 const totalPaid = booking.paymentHistory.reduce((sum, p) => sum + p.amount, 0);
@@ -448,7 +470,11 @@ const computeAddonDelta = async (booking, services, mocktails) => {
   const newMocktailsTotal = existingMocktailsTotal + resolvedMocktails.reduce((sum, m) => sum + m.price, 0);
 
   const newTotals = calculateTotals({
-    servicesTotal: newServicesTotal, mocktailsTotal: newMocktailsTotal, discountPercent, gstRate: GST_RATE,
+    servicesTotal: newServicesTotal,
+    mocktailsTotal: newMocktailsTotal,
+    discountPercent,
+    gstRate: GST_RATE,
+    manualDiscountPercent: booking.manualDiscountPercent || 0, // keep reception's original discount applied
   });
 
   const delta = newTotals.grandTotal - booking.grandTotal;

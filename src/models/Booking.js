@@ -41,8 +41,9 @@ const bookingSchema = new mongoose.Schema(
     bookingDate: { type: Date, required: true, default: Date.now },
     subtotal: { type: Number, required: true },
     gst: { type: Number, required: true, default: 0 },
-    discount: { type: Number, required: true, default: 0 },
-    grandTotal: { type: Number, required: true },
+        discount: { type: Number, required: true, default: 0 },
+    manualDiscountPercent: { type: Number, default: 0 }, // % entered by reception at checkout, for receipt/audit display
+  grandTotal: { type: Number, required: true },
     couponUsed: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon", default: null },
     paymentStatus: { type: String, enum: ["pending", "partial", "paid", "failed"], default: "pending" },
     paymentRef: { type: String }, // legacy, superseded by paymentHistory — can remove if unused elsewhere
@@ -54,6 +55,7 @@ const bookingSchema = new mongoose.Schema(
     queueNumber: { type: Number, required: true },
     specialInstructions: { type: String },
     paymentHistory: [paymentEntrySchema],
+     checkInTime: { type: Date, default: null }, // stamped when bookingStatus moves to "in-service" — used for the session countdown timer
   },
   { timestamps: true }
 );

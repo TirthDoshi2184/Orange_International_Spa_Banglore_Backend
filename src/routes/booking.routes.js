@@ -17,14 +17,14 @@ import {
   getRoomMembership,
   confirmAddonPaymentWithMembership,
 } from "../controllers/booking.controller.js";
-import { protectAdmin } from "../middlewares/auth.js";
+import { protectAdmin , attachAdminIfPresent} from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import { addItemsSchema, addonConfirmSchema, addonOrderSchema, calculateSchema, confirmPaymentSchema, createBookingSchema, createOrderSchema, reassignRoomSchema, updateStatusSchema, verifyPaymentSchema } from "../schemas/booking.schemas.js";
 
 const router = Router();
 
-router.post("/bookings/calculate", validate(calculateSchema), calculateBooking);
-router.post("/bookings", validate(createBookingSchema), createBooking);
+router.post("/bookings/calculate", attachAdminIfPresent,validate(calculateSchema), calculateBooking);
+router.post("/bookings",attachAdminIfPresent, validate(createBookingSchema), createBooking);
 router.patch("/admin/bookings/:id/status", protectAdmin, validate(updateStatusSchema), updateBookingStatus);
 router.post("/bookings/:id/confirm-payment", protectAdmin, validate(confirmPaymentSchema), confirmPayment);
 router.get("/bookings/:id", getBookingById);
