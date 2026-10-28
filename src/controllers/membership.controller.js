@@ -6,6 +6,7 @@ import {
   enrollMembership,
   rechargeMembership,
   manualAdjustment,
+  collectDue
 } from "../services/membership.services.js";
 
 // ---- Packages ----
@@ -122,5 +123,16 @@ export const getMembershipByCustomer = async (req, res, next) => {
     const membership = await Membership.findOne({ customerId: req.params.customerId })
       .populate("packageId", "name price creditAmount");
     res.json({ success: true, data: membership || null });
+  } catch (err) { next(err); }
+};
+
+export const collectDueHandler = async (req, res, next) => {
+  try {
+    const { amountPaid, paymentMethod, reference } = req.body;
+    const result = await collectDue({
+      membershipId: req.params.id, amountPaid, paymentMethod, reference,
+      performedBy: req.admin.id,
+    });
+    res.json({ success: true, data: result });
   } catch (err) { next(err); }
 };

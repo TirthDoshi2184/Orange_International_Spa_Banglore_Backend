@@ -41,6 +41,9 @@ export const enrollMembership = async ({ customer, packageId, amountPaid, paymen
     const pkg = await MembershipPackage.findOne({ _id: packageId, isActive: true }).session(session);
     if (!pkg) throw err(400, "Selected package is not available");
 
+    if (!amountPaid || amountPaid <= 0 || amountPaid > pkg.price)
+  throw err(400, `Amount paid must be between 1 and ₹${pkg.price}`);
+const due = pkg.price - amountPaid;
     let customerDoc = await Customer.findOne({ mobileNumber: customer.mobileNumber }).session(session);
     if (!customerDoc) {
       customerDoc = (await Customer.create([{ ...customer }], { session }))[0];
@@ -61,6 +64,7 @@ export const enrollMembership = async ({ customer, packageId, amountPaid, paymen
           tier: pkg.name,
           balance: balanceAfter,
           totalCreditEver: balanceAfter,
+          amountDue: due,
           totalUsedEver: 0,
           status: "active",
           expiresAt: expiryDateFor(pkg),
@@ -81,6 +85,10 @@ export const enrollMembership = async ({ customer, packageId, amountPaid, paymen
           packageId: pkg._id,
           performedBy,
           amountPaid,
+           packagePrice: pkg.price,        // <-- add
+  amountDue: due,                 // <-- add
+  paymentMethod,                  // <-- add
+  reference,   
         },
       ],
       { session }
@@ -103,6 +111,9 @@ export const rechargeMembership = async ({ membershipId, packageId, amountPaid, 
     const pkg = await MembershipPackage.findOne({ _id: packageId, isActive: true }).session(session);
     if (!pkg) throw err(400, "Selected package is not available");
 
+    if (!amountPaid || amountPaid <= 0 || amountPaid > pkg.price)
+  throw err(400, `Amount paid must be between 1 and ₹${pkg.price}`);
+const due = pkg.price - amountPaid;
     const membership = await Membership.findById(membershipId).session(session);
     if (!membership) throw err(404, "Membership not found");
 
@@ -115,6 +126,7 @@ export const rechargeMembership = async ({ membershipId, packageId, amountPaid, 
     membership.packageId = pkg._id;
     membership.status = "active";
     membership.expiresAt = expiryDateFor(pkg); // recharge resets validity window to the new package's term
+    membership.amountDue = (membership.amountDue || 0) + due;   // <-- add
     await membership.save({ session });
 
     const txn = await MembershipTransaction.create(
@@ -128,6 +140,11 @@ export const rechargeMembership = async ({ membershipId, packageId, amountPaid, 
           packageId: pkg._id,
           performedBy,
           amountPaid,
+          amountPaid,
+packagePrice: pkg.price,
+amountDue: due,
+paymentMethod,
+reference,
         },
       ],
       { session }
@@ -294,5 +311,31 @@ export const reverseMembershipDeduction = async ({ originalTransactionId, perfor
     );
 
     return { membership, transaction: txn[0] };
+  });
+};
+
+export const collectDue = async ({ membershipId, amountPaid, paymentMethod, reference, performedBy }) => {
+  if (!amountPaid || amountPaid <= 0) throw err(400, "Invalid amount");
+
+  return runInTransaction(async (session) => {
+    // atomic guard: can't collect more than what's owed
+    const updated = await Membership.findOneAndUpdate(
+      { _id: membershipId, amountDue: { $gte: amountPaid } },
+      { $inc: { amountDue: -amountPaid } },
+      { new: true, session }
+    );
+    if (!updated) throw err(400, "Amount exceeds the outstanding due");
+
+    const txn = await MembershipTransaction.create([{
+      membershipId: updated._id,
+      type: "due_payment",
+      amount: 0,                       // no credit change
+      balanceBefore: updated.balance,
+      balanceAfter: updated.balance,
+      amountPaid, amountDue: updated.amountDue,
+      paymentMethod, reference, performedBy,
+    }], { session });
+
+    return { membership: updated, transaction: txn[0] };
   });
 };

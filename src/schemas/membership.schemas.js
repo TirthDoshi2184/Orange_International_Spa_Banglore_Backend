@@ -35,3 +35,10 @@ export const adjustSchema = z.object({
   amount: z.number().refine((v) => v !== 0, "Amount cannot be zero"),
   reason: z.string().min(3, "Reason must be at least 3 characters"),
 });
+
+// membership.schemas.js
+export const collectDueSchema = z.object({
+  amountPaid: z.number().positive(),
+  paymentMethod: z.enum(["cash", "card", "upi", "razorpay", "other"]),
+  reference: z.string().optional(),
+});

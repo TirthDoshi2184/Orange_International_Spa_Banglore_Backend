@@ -10,7 +10,7 @@ const membershipSchema = new mongoose.Schema(
     // balance is the ONLY authoritative source of truth for "how much can be spent right now".
     // It is never set directly outside membership.service.js — always via atomic $inc.
     balance: { type: Number, required: true, default: 0, min: 0 },
-
+amountDue: { type: Number, required: true, default: 0, min: 0 }, // unpaid portion of package price(s)
     totalCreditEver: { type: Number, required: true, default: 0 }, // lifetime credit ever added (purchase+recharge+positive adjustments)
     totalUsedEver: { type: Number, required: true, default: 0 },   // lifetime credit ever spent (service+addon deductions, positive adjustments-out)
 

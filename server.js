@@ -60,3 +60,4 @@ cron.schedule("0 23 * * *", async () => {
   const result = await runDayEndCleanup();
   console.log("[Day-End Cleanup]", result);
 });
+

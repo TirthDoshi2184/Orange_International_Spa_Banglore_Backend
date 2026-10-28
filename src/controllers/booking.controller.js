@@ -25,19 +25,31 @@ const resolvePricing = async ({ services = [], mocktails = [], couponCode, custo
   const durations = await ServiceDuration.find({ _id: { $in: durationIds }, isActive: true });
 
   const resolvedServices = services.map((s) => {
-    const d = durations.find((x) => x._id.toString() === s.durationId);
-    if (!d) throw { statusCode: 400, message: "Invalid or inactive service duration" };
-    return { serviceId: s.serviceId, durationId: s.durationId, price: d.price };
-  });
+  const d = durations.find((x) => x._id.toString() === s.durationId);
+  if (!d) throw { statusCode: 400, message: "Invalid or inactive service duration" };
+  if (s.complimentary && !isAdmin) throw { statusCode: 403, message: "Only reception/admin can mark items complimentary." };
+  return {
+    serviceId: s.serviceId,
+    durationId: s.durationId,
+    price: s.complimentary ? 0 : d.price,
+    complimentary: !!s.complimentary,
+  };
+});
 
   const mocktailIds = mocktails.map((m) => m.mocktailId);
   const mocktailDocs = await Mocktail.find({ _id: { $in: mocktailIds }, isAvailable: true });
 
   const resolvedMocktails = mocktails.map((m) => {
-    const doc = mocktailDocs.find((x) => x._id.toString() === m.mocktailId);
-    if (!doc) throw { statusCode: 400, message: "Invalid or unavailable mocktail" };
-    return { mocktailId: m.mocktailId, qty: m.qty, price: doc.price * m.qty };
-  });
+  const doc = mocktailDocs.find((x) => x._id.toString() === m.mocktailId);
+  if (!doc) throw { statusCode: 400, message: "Invalid or unavailable mocktail" };
+  if (m.complimentary && !isAdmin) throw { statusCode: 403, message: "Only reception/admin can mark items complimentary." };
+  return {
+    mocktailId: m.mocktailId,
+    qty: m.qty,
+    price: m.complimentary ? 0 : doc.price * m.qty,
+    complimentary: !!m.complimentary,
+  };
+});
 
   const servicesTotal = resolvedServices.reduce((sum, s) => sum + s.price, 0);
   const mocktailsTotal = resolvedMocktails.reduce((sum, m) => sum + m.price, 0);
@@ -115,6 +127,7 @@ export const createBooking = async (req, res, next) => {
       couponUsed: coupon ? coupon._id : null,
       queueNumber,
       specialInstructions,
+      paymentStatus: totals.grandTotal === 0 ? "paid" : "pending",
     });
     customerDoc.visitHistory.push(booking._id);
     await customerDoc.save();
@@ -219,7 +232,7 @@ export const getBookingById = async (req, res, next) => {
 export const getAdminBookings = async (req, res, next) => {
   try {
     const { status, date } = req.query;
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (status) filter.bookingStatus = status;
     if (date) {
       const start = new Date(date); start.setHours(0, 0, 0, 0);
@@ -574,6 +587,7 @@ export const confirmAddonPayment = async (req, res, next) => {
 };
 // PATCH /api/admin/bookings/:id/reassign-room   { roomId }
 export const reassignRoom = async (req, res, next) => {
+  const { start, end } = getTodayRange();
   try {
     const { roomId } = req.body;
     const booking = await Booking.findById(req.params.id);
@@ -683,5 +697,78 @@ export const confirmAddonPaymentWithMembership = async (req, res, next) => {
     await AddonOrder.create({ bookingId: booking._id, roomId: booking.roomId, items: orderItems, amount: delta });
 
     res.json({ success: true, data: populated });
+  } catch (err) { next(err); }
+};
+
+// PATCH /api/admin/bookings/:id/payment-method   { index, method, reference? }
+export const updatePaymentMethod = async (req, res, next) => {
+  try {
+    const { index, method, reference } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) throw { statusCode: 404, message: "Booking not found" };
+
+    const entry = booking.paymentHistory[index];
+    if (!entry) throw { statusCode: 404, message: "Payment entry not found" };
+
+    if (["membership_credit", "razorpay"].includes(entry.method)) {
+      throw { statusCode: 400, message: `${entry.method} payments cannot be edited` };
+    }
+
+    if (entry.method !== method) entry.previousMethod = entry.method;
+    entry.method = method;
+    if (reference !== undefined) entry.reference = reference;
+    entry.editedAt = new Date();
+    entry.editedBy = req.admin.id;
+
+    await booking.save();
+    const populated = await booking.populate([
+      { path: "timeSlot customerId roomId" },
+      { path: "services.serviceId", select: "name category" },
+      { path: "services.durationId", select: "durationMinutes" },
+      { path: "mocktails.mocktailId", select: "name" },
+    ]);
+    res.json({ success: true, data: populated });
+  } catch (err) { next(err); }
+};
+
+// DELETE /api/admin/bookings/:id   { reason }
+export const deleteBooking = async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking || booking.isDeleted) throw { statusCode: 404, message: "Booking not found" };
+
+    // 1. Give back membership credit (idempotent — safe even if cancel already reversed it)
+    const membershipPayments = booking.paymentHistory.filter(
+      (p) => p.method === "membership_credit" && p.membershipTxnId
+    );
+    for (const payment of membershipPayments) {
+      await reverseMembershipDeduction({
+        originalTransactionId: payment.membershipTxnId,
+        performedBy: req.admin.id,
+      });
+    }
+
+    // 2. Cancel any pending live orders for this booking
+    await AddonOrder.updateMany(
+      { bookingId: booking._id, status: { $ne: "delivered" } },
+      { status: "cancelled" }
+    );
+
+    // 3. Make the coupon usable again
+    if (booking.couponUsed) {
+      await Coupon.findByIdAndUpdate(booking.couponUsed, { isUsed: false });
+    }
+
+    // 4. Soft delete. "cancelled" frees the room and slot capacity, because both
+    //    checks already ignore cancelled bookings.
+    booking.bookingStatus = "cancelled";
+    booking.isDeleted = true;
+    booking.deletedAt = new Date();
+    booking.deletedBy = req.admin.id;
+    booking.deleteReason = reason.trim();
+    await booking.save();
+
+    res.json({ success: true, data: { _id: booking._id } });
   } catch (err) { next(err); }
 };

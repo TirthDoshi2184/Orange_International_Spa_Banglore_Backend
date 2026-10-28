@@ -3,10 +3,12 @@ import { z } from "zod";
 const serviceItem = z.object({
   serviceId: z.string().min(1),
   durationId: z.string().min(1),
+  complimentary: z.boolean().optional(),
 });
 const mocktailItem = z.object({
   mocktailId: z.string().min(1),
   qty: z.number().positive(),
+  complimentary: z.boolean().optional(),
 });
 
 export const calculateSchema = z.object({
@@ -78,3 +80,13 @@ export const reassignRoomSchema = z.object({
   roomId: z.string().min(1),
 });
 
+
+export const updatePaymentMethodSchema = z.object({
+  index: z.number().int().min(0),
+  method: z.enum(["cash", "card", "upi", "other"]),   // no razorpay / membership_credit
+  reference: z.string().optional(),
+});
+
+export const deleteBookingSchema = z.object({
+  reason: z.string().min(3, "Please give a reason (at least 3 characters)"),
+});

@@ -8,7 +8,7 @@ const membershipTransactionSchema = new mongoose.Schema(
     membershipId: { type: mongoose.Schema.Types.ObjectId, ref: "Membership", required: true, index: true },
      type: {
       type: String,
-      enum: ["purchase", "recharge", "service_deduction", "addon_deduction", "manual_adjustment", "cancellation_reversal"],
+      enum: ["purchase", "recharge", "service_deduction", "addon_deduction", "manual_adjustment", "cancellation_reversal","due_payment"],
       required: true,
     },
     amount: { type: Number, required: true }, // ALWAYS signed: positive = credit added, negative = credit spent
@@ -22,7 +22,11 @@ const membershipTransactionSchema = new mongoose.Schema(
     performedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }, // null = customer self-service (in-room QR flow)
     reason: { type: String, default: "" }, // required (enforced in service layer) for manual_adjustment
 
-    amountPaid: { type: Number, default: null }, // for purchase/recharge — actual ₹ the customer handed over
+    packagePrice:  { type: Number },
+amountPaid:    { type: Number },
+amountDue:     { type: Number },   // due left on THIS purchase
+paymentMethod: { type: String },
+reference:     { type: String },
 reversalOf: { type: mongoose.Schema.Types.ObjectId, ref: "MembershipTransaction", default: null }, // set only on cancellation_reversal rows  
 },
   { timestamps: { createdAt: true, updatedAt: false } }

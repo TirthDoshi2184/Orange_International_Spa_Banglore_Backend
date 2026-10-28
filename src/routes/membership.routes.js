@@ -3,12 +3,15 @@ import {
   getPackages, createPackage, updatePackage,
   createMembership, rechargeMembershipHandler,
   searchMembership, getMembershipDetail, getMembershipByCustomer,
+  collectDueHandler,
+  adjustMembershipHandler,
 } from "../controllers/membership.controller.js";
 import { protectAdmin } from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
 import {
   createPackageSchema, updatePackageSchema,
   enrollMembershipSchema, rechargeSchema, adjustSchema,
+  collectDueSchema,
 } from "../schemas/membership.schemas.js";
 
 const router = Router();
@@ -24,4 +27,9 @@ router.post("/admin/memberships/:id/recharge", protectAdmin, validate(rechargeSc
 
 router.get("/admin/customers/:customerId/membership", protectAdmin, getMembershipByCustomer);
 
+
+// routes
+router.post("/admin/memberships/:id/collect-due", protectAdmin, validate(collectDueSchema), collectDueHandler);
+
+router.post("/admin/memberships/:id/adjust", protectAdmin, validate(adjustSchema), adjustMembershipHandler);
 export default router;

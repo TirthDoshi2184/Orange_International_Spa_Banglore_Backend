@@ -16,10 +16,12 @@ import {
   reassignRoom,
   getRoomMembership,
   confirmAddonPaymentWithMembership,
+  updatePaymentMethod,
+  deleteBooking,
 } from "../controllers/booking.controller.js";
 import { protectAdmin , attachAdminIfPresent} from "../middlewares/auth.js";
 import { validate } from "../middlewares/validate.js";
-import { addItemsSchema, addonConfirmSchema, addonOrderSchema, calculateSchema, confirmPaymentSchema, createBookingSchema, createOrderSchema, reassignRoomSchema, updateStatusSchema, verifyPaymentSchema } from "../schemas/booking.schemas.js";
+import { addItemsSchema, addonConfirmSchema, addonOrderSchema, calculateSchema, confirmPaymentSchema, createBookingSchema, createOrderSchema, deleteBookingSchema, reassignRoomSchema, updatePaymentMethodSchema, updateStatusSchema, verifyPaymentSchema } from "../schemas/booking.schemas.js";
 
 const router = Router();
 
@@ -29,6 +31,7 @@ router.patch("/admin/bookings/:id/status", protectAdmin, validate(updateStatusSc
 router.post("/bookings/:id/confirm-payment", protectAdmin, validate(confirmPaymentSchema), confirmPayment);
 router.get("/bookings/:id", getBookingById);
 router.get("/admin/bookings", protectAdmin, getAdminBookings);
+router.patch("/admin/bookings/:id/payment-method", protectAdmin, validate(updatePaymentMethodSchema), updatePaymentMethod);
 
 router.get("/bookings/active", findActiveBooking);
 router.post("/bookings/:id/add-items", validate(addItemsSchema), addItemsToBooking);
@@ -46,5 +49,6 @@ router.patch("/admin/bookings/:id/reassign-room", protectAdmin, validate(reassig
 router.get("/bookings/room/:roomId/membership", getRoomMembership);
 router.post("/bookings/:id/addon-confirm-membership", confirmAddonPaymentWithMembership);
 
+router.delete("/admin/bookings/:id", protectAdmin, validate(deleteBookingSchema), deleteBooking);
 
 export default router;

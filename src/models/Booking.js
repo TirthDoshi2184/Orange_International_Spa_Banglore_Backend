@@ -26,6 +26,9 @@ const paymentEntrySchema = new mongoose.Schema(
     reference: { type: String },
     paidAt: { type: Date, default: Date.now },
     membershipTxnId: { type: mongoose.Schema.Types.ObjectId, ref: "MembershipTransaction", default: null },
+  previousMethod: { type: String, default: null },
+editedAt:       { type: Date, default: null },
+editedBy:       { type: mongoose.Schema.Types.ObjectId, default: null },
   },
   { _id: false }
 );
@@ -56,7 +59,14 @@ const bookingSchema = new mongoose.Schema(
     specialInstructions: { type: String },
     paymentHistory: [paymentEntrySchema],
      checkInTime: { type: Date, default: null }, // stamped when bookingStatus moves to "in-service" — used for the session countdown timer
-  },
+  // in bookingServiceItemSchema AND bookingMocktailItemSchema
+complimentary: { type: Boolean, default: false },
+
+isDeleted:    { type: Boolean, default: false, index: true },
+deletedAt:    { type: Date, default: null },
+deletedBy:    { type: mongoose.Schema.Types.ObjectId, default: null },
+deleteReason: { type: String, default: "" },
+    },
   { timestamps: true }
 );
 
